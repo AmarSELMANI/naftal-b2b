@@ -142,7 +142,7 @@ export default async function adminRoutes(app) {
         .header('Content-Disposition', `inline; filename="${encodeURIComponent(doc.fileName)}"`)
         .header('Cache-Control', 'private, no-store'); // never cached anywhere
 
-      return reply.send(getObjectStream(doc.storageKey));
+      return reply.send(await getObjectStream(doc.storageKey));
     },
   );
 

@@ -1,0 +1,45 @@
+# The build context is the repository root, because the API serves product
+# images from ./assets (see app.js: fastifyStatic root -> ../../assets).
+# Everything the API does not need is excluded here.
+
+# Secrets — never in an image layer.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Uploaded KYC documents.
+backend/.uploads/
+
+# Installed per-stage inside the image, never copied in.
+**/node_modules/
+
+# The mobile app and the agent console are deployed separately.
+src/
+screens/
+Components/
+admin-web/
+App.js
+App.legacy.js
+Login.js
+Register.js
+Wait.js
+NaftalBar.js
+Naftalprev.js
+orders.js
+productnf.js
+index.js
+app.json
+babel.config.js
+metro.config.js
+package.json
+package-lock.json
+
+# Build output and local tooling.
+.expo/
+dist/
+web-build/
+.playwright-mcp/
+.git/
+.gitignore
+docs/
+**/*.log

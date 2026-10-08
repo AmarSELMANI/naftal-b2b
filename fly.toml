@@ -1,0 +1,59 @@
+# Fly.io configuration for the API.
+#
+# Region `fra` is not a preference, it is the whole point: the Neon project is
+# in AWS eu-central-1 (Frankfurt), and a database round trip measured from a
+# development machine costs ~238 ms. Co-locating the app with the database puts
+# that into single digits, which outweighs every query optimisation in the
+# codebase combined. Deploying this anywhere else undoes that.
+#
+#   fly launch --no-deploy --copy-config    # first time, creates the app
+#   fly secrets set ...                     # see README "Deploying"
+#   fly deploy
+
+app = "naftal-api"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Runs once per release, before the new machines take traffic. Uses
+  # DIRECT_URL, not the pooled endpoint — migrations need a real session.
+  release_command = "npx prisma migrate deploy"
+
+# Non-secret configuration. Anything sensitive goes through `fly secrets set`,
+# which stores it encrypted and injects it at runtime instead of baking it into
+# the image or committing it here.
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+  HOST = "0.0.0.0"
+  # TLS terminates at Fly's proxy, so X-Forwarded-For is trustworthy here —
+  # and only here. See the note in src/app.js about forged headers.
+  TRUST_PROXY = "true"
+  ENABLE_DOCS = "false"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Zero keeps it inside the free allowance at the cost of a ~2 s cold start on
+  # the first request. Set this to 1 the day before a demo so the jury never
+  # waits, then set it back.
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/v1/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # 512 MB rather than 256: argon2id is configured at OWASP's parameters, which
+  # allocate ~19 MB per hash by design. Several concurrent logins on a 256 MB
+  # machine risk the OOM killer.
+  memory = "512mb"
+  cpus = 1

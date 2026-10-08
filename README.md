@@ -209,6 +209,60 @@ It is not on any request path and upstream has not published a fix.
 
 ---
 
+## Deploying
+
+The API ships as a container. `Dockerfile` and `fly.toml` are at the repository
+root, not in `backend/`, because the API serves product images from `assets/`
+and a build context of `backend/` cannot see that folder.
+
+**Region `fra` is the one setting that must not change.** The database is in AWS
+eu-central-1; a round trip measured from a development machine is ~238 ms.
+Putting the app in the same city makes it single-digit, which is worth more than
+every query optimisation here combined.
+
+```bash
+fly launch --no-deploy --copy-config      # creates the app, keeps fly.toml
+```
+
+Then the secrets. These never go in `fly.toml` — it is committed:
+
+```bash
+fly secrets set   DATABASE_URL="postgresql://…-pooler…?sslmode=require&pgbouncer=true&connection_limit=5"   DIRECT_URL="postgresql://…(no -pooler)…?sslmode=require"   JWT_ACCESS_SECRET="…"   JWT_REFRESH_SECRET="…"   SEED_ADMIN_PASSWORD="…"   CORS_ORIGINS="https://your-console.pages.dev"
+```
+
+If a password contains `:` or `/`, percent-encode it — they are structural
+characters in a connection URL and Postgres will report a nonsense "invalid
+port number" instead of an authentication error.
+
+```bash
+fly deploy
+```
+
+`prisma migrate deploy` runs as the release command, before the new machines
+take traffic, so a failed migration aborts the release instead of leaving a
+half-migrated database serving requests. Seed the catalog once afterwards with
+`fly ssh console -C "npm run seed --prefix /app/backend"`.
+
+**Documents.** With no `R2_*` set, uploads go to the container filesystem, which
+Fly discards on every deploy — acceptable for a demo, data loss in use. Create a
+**private** R2 bucket and add:
+
+```bash
+fly secrets set R2_ACCOUNT_ID="…" R2_ACCESS_KEY_ID="…"   R2_SECRET_ACCESS_KEY="…" R2_BUCKET_DOCUMENTS="naftal-documents"
+```
+
+The driver switches on their presence; no code changes. The bucket must stay
+private — documents are streamed through the authenticated route, never linked.
+
+**The console** is a static build: `npm run build` in `admin-web/`, deploy
+`dist/` to Cloudflare Pages or Netlify, with `VITE_API_URL` set to
+`https://naftal-api.fly.dev/v1`. Its origin must appear in `CORS_ORIGINS`.
+
+**The app** reads `EXPO_PUBLIC_API_URL`, so a production build is
+`EXPO_PUBLIC_API_URL=https://naftal-api.fly.dev/v1 eas build`.
+
+---
+
 ## Status
 
 Working: account opening with document review, the catalog, ordering on credit,
@@ -216,12 +270,12 @@ the credit ceiling, payments, the agent console, and notifications.
 
 Not yet done:
 
-- **Deployment.** Intended for Fly.io in region `fra`, in the same region as the
-  database — co-locating them turns that ~238 ms round trip into single digits,
-  which is the single biggest latency decision available.
-- **Document storage** writes to local disk. The storage layer is behind one
-  interface with a Cloudflare R2 driver selected by the presence of `R2_*`
-  credentials, so adding them is the whole migration.
+- **Deployment has not been run.** The container and `fly.toml` are written and
+  described above, but nothing is live: that needs a Fly.io account, and the
+  numbers quoted here were measured against a local server talking to Neon.
+- **R2 is implemented but unexercised.** The driver is written against the S3
+  API and selected by `R2_*`; every test so far has run on the local driver,
+  so treat the first upload to a real bucket as the thing to verify.
 - **Push on a real handset** needs an EAS project id and a development build;
   push does not work in Expo Go on Android or on web. Everything up to the
   handset is implemented and tested.

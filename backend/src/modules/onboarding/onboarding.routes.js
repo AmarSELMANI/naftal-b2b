@@ -183,7 +183,7 @@ export default async function onboardingRoutes(app) {
         kind,
         fileName: file.filename,
       });
-      await putObject(storageKey, buffer);
+      await putObject(storageKey, buffer, file.mimetype);
 
       // Re-uploading a kind replaces it, so a wrong scan is fixable without
       // leaving two competing copies for the agent to choose between.
