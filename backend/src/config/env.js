@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().positive().default(3000),
+  PORT: z.coerce.number().int().positive().default(3100),
   HOST: z.string().default('0.0.0.0'),
 
   DATABASE_URL: z.string().min(1),
@@ -28,7 +28,7 @@ const schema = z.object({
   // the app. See the note in app.js about forged X-Forwarded-For.
   TRUST_PROXY: z.coerce.boolean().default(false),
   ENABLE_DOCS: z.coerce.boolean().default(false),
-  PUBLIC_ASSET_BASE_URL: z.string().default('http://localhost:3000/static'),
+  PUBLIC_ASSET_BASE_URL: z.string().default('http://localhost:3100/static'),
 
   R2_ACCOUNT_ID: z.string().optional(),
   R2_ACCESS_KEY_ID: z.string().optional(),
