@@ -1,0 +1,449 @@
+// Naftal B2B — database schema
+// Design rationale lives in docs/BACKEND-DESIGN.md. Read §3 before changing a table.
+//
+// Conventions in this file:
+//   • money is ALWAYS Decimal(14,2) — never Float. §3.2
+//   • prices are TTC (tax included); VAT is extracted, not added. §10.4
+//   • usernames/emails are stored lower-cased by the service layer, so a plain
+//     unique index is case-insensitive in practice (no citext extension needed).
+
+generator client {
+  provider = "prisma-client-js"
+  // relationJoins lets a query with `include` resolve relations in ONE round
+  // trip via LATERAL joins, instead of Prisma's default one-SELECT-per-relation.
+  // Measured against Neon Frankfurt (~234ms RTT) that is the difference between
+  // 518ms and 234ms for a product detail. See §5.11.
+  previewFeatures = ["relationJoins"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooled  — the app
+  directUrl = env("DIRECT_URL")   // direct  — migrations only. §5.8
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum CompanyStatus {
+  pending
+  approved
+  denied
+  suspended
+}
+
+enum UserRole {
+  customer
+  agent // Naftal staff: reviews account requests, manages orders
+  admin // Naftal staff: the above + credit policy settings
+}
+
+enum RequestStatus {
+  pending
+  approved
+  denied
+}
+
+enum DocumentKind {
+  id_card
+  proof_of_address
+  business_registration
+  tin
+  bank_statement
+}
+
+enum ProductStatus {
+  active
+  discontinued
+  hidden
+}
+
+enum OrderStatus {
+  confirmed
+  preparing
+  shipped
+  delivered
+  cancelled
+}
+
+enum PaymentType {
+  immediate
+  credit
+}
+
+enum PaymentState {
+  unpaid
+  partially_paid
+  paid
+}
+
+enum PaymentMethod {
+  card
+  cheque
+  cash
+  bank_transfer
+}
+
+enum PaymentStatus {
+  declared
+  confirmed
+  rejected
+}
+
+// ---------------------------------------------------------------------------
+// Identity & onboarding
+// ---------------------------------------------------------------------------
+
+model Company {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  legalForm       String?       @map("legal_form") // SARL / EURL / SPA / ETS
+  tradeRegisterNo String?       @map("trade_register_no")
+  tin             String? // NIF
+  address         String?
+  phone           String?
+  email           String?
+  // NULL on both = use the Naftal-wide policy from AppSetting. §3.1
+  creditLimit     Decimal?      @map("credit_limit") @db.Decimal(14, 2)
+  creditTermDays  Int?          @map("credit_term_days")
+  approvalStatus  CompanyStatus @default(pending) @map("approval_status")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  users    User[]
+  requests AccountRequest[]
+  orders   Order[]
+  payments Payment[]
+
+  @@index([approvalStatus, createdAt])
+  @@map("companies")
+}
+
+model User {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId    String?   @map("company_id") @db.Uuid // null for Naftal staff
+  username     String    @unique // stored lower-case
+  passwordHash String    @map("password_hash") // argon2id
+  firstName    String    @map("first_name")
+  lastName     String    @map("last_name")
+  email        String?   @unique // stored lower-case
+  phone        String?
+  role         UserRole  @default(customer)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  company           Company?         @relation(fields: [companyId], references: [id])
+  submittedRequests AccountRequest[] @relation("submitted_by")
+  decidedRequests   AccountRequest[] @relation("decided_by")
+  orders            Order[]
+  confirmedPayments Payment[]
+  deviceTokens      DeviceToken[]
+  notifications     Notification[]
+  refreshTokens     RefreshToken[]
+  settingChanges    AppSetting[]
+  auditEntries      AuditLog[]
+
+  @@index([companyId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") // the raw token never touches the DB
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("refresh_tokens")
+}
+
+model AccountRequest {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  submittedById   String        @map("submitted_by") @db.Uuid
+  status          RequestStatus @default(pending)
+  termsAcceptedAt DateTime      @map("terms_accepted_at")
+  decidedById     String?       @map("decided_by") @db.Uuid
+  decidedAt       DateTime?     @map("decided_at")
+  denialReason    String?       @map("denial_reason")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  company     Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  submittedBy User       @relation("submitted_by", fields: [submittedById], references: [id])
+  decidedBy   User?      @relation("decided_by", fields: [decidedById], references: [id])
+  documents   Document[]
+
+  @@index([status, createdAt]) // the admin queue
+  @@index([companyId])
+  @@map("account_requests")
+}
+
+model Document {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountRequestId String       @map("account_request_id") @db.Uuid
+  kind             DocumentKind
+  storageKey       String       @map("storage_key") // R2 key — bucket is PRIVATE. §6
+  fileName         String       @map("file_name")
+  mimeType         String       @map("mime_type")
+  sizeBytes        Int          @map("size_bytes")
+  uploadedAt       DateTime     @default(now()) @map("uploaded_at")
+
+  accountRequest AccountRequest @relation(fields: [accountRequestId], references: [id], onDelete: Cascade)
+
+  @@unique([accountRequestId, kind])
+  @@map("documents")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Category {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  parentId  String? @map("parent_id") @db.Uuid
+  slug      String  @unique
+  nameEn    String  @map("name_en")
+  nameFr    String  @map("name_fr")
+  icon      String? // FontAwesome5 name, already used by tires.js
+  sortOrder Int     @default(0) @map("sort_order")
+
+  parent   Category?        @relation("category_tree", fields: [parentId], references: [id])
+  children Category[]       @relation("category_tree")
+  brands   BrandCategory[]
+  products Product[]
+
+  @@index([parentId, sortOrder])
+  @@map("categories")
+}
+
+model Brand {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String  @unique
+  name      String // proper noun — never translated. §3.2
+  logoUrl   String? @map("logo_url")
+  sortOrder Int     @default(0) @map("sort_order")
+
+  categories BrandCategory[]
+  products   Product[]
+
+  @@map("brands")
+}
+
+model BrandCategory {
+  brandId    String @map("brand_id") @db.Uuid
+  categoryId String @map("category_id") @db.Uuid
+  sortOrder  Int    @default(0) @map("sort_order")
+
+  brand    Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([brandId, categoryId])
+  @@index([categoryId])
+  @@map("brand_categories")
+}
+
+model Product {
+  id   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sku  String @unique
+  // always a LEAF category: light-tires / heavy-tires / agricultural-tires / lubricants
+  categoryId String @map("category_id") @db.Uuid
+  brandId    String @map("brand_id") @db.Uuid
+
+  model          String // 'ULTRACONTACT'
+  size           String? // '225/55 R 18' — null for lubricants
+  loadSpeedIndex String? @map("load_speed_index") // '144/142L' — heavy tires
+  displayName    String  @map("display_name") // exactly what the card shows today
+  imageUrl       String  @map("image_url")
+
+  unitPrice Decimal       @map("unit_price") @db.Decimal(12, 2) // DA, TTC. §10.4
+  vatRate   Decimal       @default(0.190) @map("vat_rate") @db.Decimal(4, 3)
+  status    ProductStatus @default(active)
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  category   Category      @relation(fields: [categoryId], references: [id])
+  brand      Brand         @relation(fields: [brandId], references: [id])
+  stock      ProductStock?
+  orderItems OrderItem[]
+
+  @@index([categoryId, brandId])
+  @@index([brandId])
+  @@index([size])
+  @@map("products")
+}
+
+/// Split from Product on purpose: stock changes on every order, and keeping it
+/// here means a purchase does not invalidate the cached catalog ETag. §5.2
+model ProductStock {
+  productId String   @id @map("product_id") @db.Uuid
+  quantity  Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_stock")
+}
+
+// ---------------------------------------------------------------------------
+// Orders, payments
+// ---------------------------------------------------------------------------
+
+model Order {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderNo      String       @unique @map("order_no") // 'CMD-2026-000123', from a sequence
+  companyId    String       @map("company_id") @db.Uuid
+  placedById   String       @map("placed_by") @db.Uuid
+  status       OrderStatus  @default(confirmed)
+  paymentType  PaymentType  @map("payment_type")
+  subtotal     Decimal      @db.Decimal(14, 2) // HT  = total / (1 + vatRate)
+  vatAmount    Decimal      @map("vat_amount") @db.Decimal(14, 2) // TVA = total - subtotal
+  total        Decimal      @db.Decimal(14, 2) // TTC = Σ(unitPrice × qty)
+  amountPaid   Decimal      @default(0) @map("amount_paid") @db.Decimal(14, 2)
+  paymentState PaymentState @default(unpaid) @map("payment_state")
+  dueDate      DateTime?    @map("due_date") @db.Date // credit orders only
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  company  Company     @relation(fields: [companyId], references: [id])
+  placedBy User        @relation(fields: [placedById], references: [id])
+  items    OrderItem[]
+  payments Payment[]
+
+  @@index([companyId, createdAt(sort: Desc)]) // the Orders screen, no sort step. §5.3
+  @@index([companyId, paymentType, paymentState]) // credit outstanding. §5.7
+  @@index([paymentState, dueDate])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId   String @map("order_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  quantity  Int
+
+  // Snapshots: order history must survive a price change or a rename. §3.3
+  unitPrice     Decimal @map("unit_price") @db.Decimal(12, 2)
+  vatRate       Decimal @map("vat_rate") @db.Decimal(4, 3)
+  lineTotal     Decimal @map("line_total") @db.Decimal(14, 2)
+  nameSnapshot  String  @map("name_snapshot")
+  imageSnapshot String? @map("image_snapshot")
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Payment {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId     String        @map("order_id") @db.Uuid
+  companyId   String        @map("company_id") @db.Uuid
+  method      PaymentMethod
+  amount      Decimal       @db.Decimal(14, 2)
+  status      PaymentStatus @default(declared) // declared → confirmed by an agent. §3.3
+  reference   String? // cheque no. / transfer ref
+  declaredAt  DateTime      @default(now()) @map("declared_at")
+  confirmedAt DateTime?     @map("confirmed_at")
+  confirmedById String?     @map("confirmed_by") @db.Uuid
+
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  company     Company @relation(fields: [companyId], references: [id])
+  confirmedBy User?   @relation(fields: [confirmedById], references: [id])
+
+  @@index([orderId])
+  @@index([companyId, status])
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Policy, infrastructure, audit
+// ---------------------------------------------------------------------------
+
+/// Naftal-wide policy. The credit ceiling is NOT an agent's decision. §3.1
+model AppSetting {
+  key         String   @id // 'credit_limit' | 'credit_term_days' | 'vat_rate' | 'price_display_mode'
+  value       Json
+  updatedById String?  @map("updated_by") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("app_settings")
+}
+
+/// Guards against a dropped response + a second tap creating two orders. §5.5
+model IdempotencyKey {
+  key          String   @id
+  userId       String   @map("user_id") @db.Uuid
+  endpoint     String
+  requestHash  String   @map("request_hash")
+  statusCode   Int      @map("status_code")
+  responseBody Json     @map("response_body")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt]) // for the expiry sweep
+  @@map("idempotency_keys")
+}
+
+model DeviceToken {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  expoPushToken  String   @unique @map("expo_push_token")
+  platform       String?
+  /// Which language to push in. API responses stay language-agnostic (§4.1),
+  /// but a notification has exactly one language by the time it reaches the
+  /// lock screen, so the device records its own preference.
+  language       String   @default("fr")
+  lastSeenAt     DateTime @default(now()) @map("last_seen_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+model Notification {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  type      String // 'account_approved' | 'order_shipped' | 'payment_due' …
+  titleEn   String    @map("title_en")
+  titleFr   String    @map("title_fr")
+  bodyEn    String    @map("body_en")
+  bodyFr    String    @map("body_fr")
+  data      Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+/// Approvals, price changes, stock adjustments, payment confirmations.
+/// In a credit system every one of those must be attributable. §3.4
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String // 'account_request.approve' | 'product.price_change' …
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  before      Json?
+  after       Json?
+  ip          String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorUserId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_log")
+}

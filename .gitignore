@@ -1,0 +1,48 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+# `.env` itself, not just `.env*.local`: backend/.env holds a live database
+# password and both JWT secrets. backend/.gitignore covers it too, but this is
+# the file that survives moving things around.
+.env
+.env.*
+!.env.example
+*.env
+
+# uploaded KYC documents (ID cards, bank statements) never belong in the repo
+.uploads/
+
+# local tooling output
+.playwright-mcp/
+
+# typescript
+*.tsbuildinfo
