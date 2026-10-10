@@ -33,6 +33,10 @@ RUN npx prisma generate
 
 COPY backend/src ./src
 
+# Operational one-shots (password reset). Small, and being able to run them
+# against the deployed machine is the point.
+COPY backend/scripts ./scripts
+
 # Product images. Replace with PUBLIC_ASSET_BASE_URL pointing at R2 to drop
 # ~20 MB from the image; until then they ship with it so a fresh deploy renders.
 COPY assets /app/assets
