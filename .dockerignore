@@ -43,3 +43,4 @@ web-build/
 .gitignore
 docs/
 **/*.log
+scripts/
