@@ -106,7 +106,17 @@ export async function fetchDocument(downloadPath) {
     downloadPath.startsWith('http') ? downloadPath : BASE.replace(/\/v1$/, '') + downloadPath,
     { headers: { Authorization: 'Bearer ' + session.accessToken } },
   );
-  if (!res.ok) throw new ApiError('DOCUMENT_UNAVAILABLE', 'Could not load document', res.status);
+  if (!res.ok) {
+    // Use the API's own error code when it sent one, so a file that is missing
+    // from storage reads differently from a permission problem. Falling back to
+    // a generic code would tell the agent nothing actionable.
+    let code = 'DOCUMENT_UNAVAILABLE';
+    try {
+      const body = await res.json();
+      if (body?.error?.code) code = body.error.code;
+    } catch { /* not JSON; keep the generic code */ }
+    throw new ApiError(code, 'Could not load document', res.status);
+  }
   const blob = await res.blob();
   return { url: URL.createObjectURL(blob), type: blob.type };
 }

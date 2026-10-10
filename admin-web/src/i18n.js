@@ -61,6 +61,9 @@ export const DICT = {
     'err.ALREADY_DECIDED': 'Cette demande a déjà été traitée.',
     'err.NETWORK': 'API injoignable. Le serveur est-il démarré ?',
     'err.RATE_LIMITED': 'Trop de tentatives. Patientez quelques minutes.',
+    'err.DOCUMENT_FILE_MISSING': "Le fichier n'est plus disponible dans le stockage. "
+      + "Demandez au client de le renvoyer.",
+    'err.DOCUMENT_UNAVAILABLE': 'Impossible de charger ce document.',
     'err.UNKNOWN': 'Une erreur est survenue.',
     'nav.requests': 'Demandes',
     'nav.orders': 'Commandes',
@@ -150,6 +153,9 @@ export const DICT = {
     'err.ALREADY_DECIDED': 'This request has already been decided.',
     'err.NETWORK': 'API unreachable. Is the server running?',
     'err.RATE_LIMITED': 'Too many attempts. Wait a few minutes.',
+    'err.DOCUMENT_FILE_MISSING': 'The file is no longer in storage. '
+      + 'Ask the customer to upload it again.',
+    'err.DOCUMENT_UNAVAILABLE': 'Could not load this document.',
     'err.UNKNOWN': 'Something went wrong.',
     'nav.requests': 'Requests',
     'nav.orders': 'Orders',

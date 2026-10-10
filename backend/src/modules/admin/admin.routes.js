@@ -137,12 +137,24 @@ export default async function adminRoutes(app) {
       const doc = await app.prisma.document.findUnique({ where: { id: req.params.id } });
       if (!doc) throw notFound('DOCUMENT_NOT_FOUND', 'No such document');
 
+      // Fetch the bytes BEFORE touching the response, so a missing object is
+      // still a clean 404 rather than a 200 with an empty body.
+      let stream;
+      try {
+        stream = await getObjectStream(doc.storageKey);
+      } catch {
+        throw notFound(
+          'DOCUMENT_FILE_MISSING',
+          'The document record exists but its file is gone from storage',
+        );
+      }
+
       reply
         .header('Content-Type', doc.mimeType)
         .header('Content-Disposition', `inline; filename="${encodeURIComponent(doc.fileName)}"`)
         .header('Cache-Control', 'private, no-store'); // never cached anywhere
 
-      return reply.send(await getObjectStream(doc.storageKey));
+      return reply.send(stream);
     },
   );
 

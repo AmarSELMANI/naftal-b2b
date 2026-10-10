@@ -15,7 +15,7 @@
 // Selected by whether R2 credentials are present, so adding them to the
 // environment is the entire migration — no code path changes.
 
-import { mkdir, writeFile, unlink } from 'node:fs/promises';
+import { mkdir, writeFile, unlink, access } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, extname } from 'node:path';
@@ -89,7 +89,14 @@ export async function getObjectStream(storageKey) {
     return res.Body; // a Node Readable under Node's SDK v3 runtime
   }
 
-  return createReadStream(join(UPLOAD_ROOT, storageKey));
+  // access() first: createReadStream does NOT throw for a missing file, it
+  // emits 'error' asynchronously — by which point the 200 and the headers have
+  // already gone out and the client receives an empty body with no error. That
+  // is how a wiped upload directory looked like "nothing happens" in the
+  // console instead of a failure.
+  const path = join(UPLOAD_ROOT, storageKey);
+  await access(path);
+  return createReadStream(path);
 }
 
 export async function deleteObject(storageKey) {
