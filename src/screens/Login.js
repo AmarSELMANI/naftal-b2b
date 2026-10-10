@@ -43,7 +43,7 @@ export default function LoginScreen() {
 
       // Fire-and-forget: a device that cannot register for push (Expo Go,
       // simulator, permission refused) must still reach the app.
-      registerForPush({ language: lang });
+      registerForPush({ language: lang }).catch(() => {}); // never block sign-in
 
       if (session.company?.approvalStatus === 'approved' || session.user.role !== 'customer') {
         navigation.replace('Drawer');

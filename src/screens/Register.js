@@ -113,7 +113,7 @@ export default function Register() {
 
       // Subscribed while still pending, because the approval push is the whole
       // point and it arrives before the account is approved.
-      registerForPush({ language: lang });
+      registerForPush({ language: lang }).catch(() => {}); // never block signup
 
       // Documents upload after registration, because they attach to the account
       // request that registration creates. A failed upload must not lose the

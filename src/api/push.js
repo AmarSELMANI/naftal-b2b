@@ -19,7 +19,20 @@ import { peekSession } from './session.js';
 
 let cachedToken = null;
 
-/** Lazy import: expo-notifications is heavy and unused on web. */
+/**
+ * True inside Expo Go, as opposed to a development build or a store build.
+ *
+ * This has to be checked BEFORE expo-notifications is imported, not after.
+ * Since SDK 53 the library runs a side-effect module at import time that
+ * registers a push-token listener, and that listener throws immediately in
+ * Expo Go. A try/catch around the call site cannot help: the throw happens
+ * while the module is being evaluated, and it surfaced as a red screen on top
+ * of the registration form — a push nicety breaking account creation.
+ */
+const isExpoGo =
+  Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
+
+/** Lazy import: expo-notifications is heavy, and unusable on web or in Expo Go. */
 async function loadNotifications() {
   try {
     return await import('expo-notifications');
@@ -34,6 +47,7 @@ async function loadNotifications() {
  */
 export async function registerForPush({ language = 'fr' } = {}) {
   if (Platform.OS === 'web') return { ok: false, reason: 'web-unsupported' };
+  if (isExpoGo) return { ok: false, reason: 'expo-go-unsupported' };
   if (!peekSession()?.accessToken) return { ok: false, reason: 'not-signed-in' };
 
   const Notifications = await loadNotifications();
