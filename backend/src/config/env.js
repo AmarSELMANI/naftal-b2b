@@ -2,6 +2,23 @@
 // process immediately — never surface as `undefined` inside a JWT call.
 import { z } from 'zod';
 
+// z.coerce.boolean() is Boolean(string): EVERY non-empty string is truthy, so
+// the literal text "false" parses as true and such a flag can never be turned
+// off. Not a style point — it silently made TRUST_PROXY always-on, so
+// X-Forwarded-For was trusted with no proxy in front and a client could forge
+// it for a fresh rate-limit bucket per request, defeating the login limiter.
+// Parse the text explicitly instead.
+const boolFromEnv = (fallback) =>
+  z
+    .preprocess((v) => {
+      if (typeof v !== 'string') return v;
+      const t = v.trim().toLowerCase();
+      if (['true', '1', 'yes', 'on'].includes(t)) return true;
+      if (['false', '0', 'no', 'off', ''].includes(t)) return false;
+      return t; // anything else fails validation loudly rather than defaulting
+    }, z.boolean())
+    .default(fallback);
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3100),
@@ -26,8 +43,8 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default(''),
   // Set true only when a proxy (Fly, Render, nginx) terminates TLS in front of
   // the app. See the note in app.js about forged X-Forwarded-For.
-  TRUST_PROXY: z.coerce.boolean().default(false),
-  ENABLE_DOCS: z.coerce.boolean().default(false),
+  TRUST_PROXY: boolFromEnv(false),
+  ENABLE_DOCS: boolFromEnv(false),
   PUBLIC_ASSET_BASE_URL: z.string().default('http://localhost:3100/static'),
 
   R2_ACCOUNT_ID: z.string().optional(),
